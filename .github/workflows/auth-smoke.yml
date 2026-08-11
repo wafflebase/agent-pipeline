@@ -1,0 +1,223 @@
+# Pre-arm auth check, as a reusable workflow.
+#
+# THE FIRST THING AN ADOPTER RUNS, and the smallest workflow in the pipeline —
+# which is why it is the first one ported. It exercises every mechanism the
+# larger ports need (workflow_call inputs, secrets crossing a repo boundary,
+# `environment:` resolving in the CALLER, the pin assertion, and the trusted
+# checkout) while doing nothing more expensive than one Haiku call.
+#
+# THE PIN. Everything that follows depends on fetching the intended pipeline
+# code, and in this phase nothing downstream re-checks it — so the `pin` job
+# verifies it once, in isolation, and hands every later job an immutable commit.
+# It holds `id-token: write` and NOTHING else: the OIDC claim is the only source
+# of the called workflow's true identity, but that permission must never sit in a
+# job that also runs a model against untrusted input.
+#
+# Two facts about those claims, both established by measurement rather than docs
+# (see EXTRACTION_PLAN.md §9), and both silent if you get them wrong:
+#   * `job_workflow_sha` / `job_workflow_ref` are ABSENT from the `github`
+#     context. `${{ github.job_workflow_sha }}` renders as the empty string, so a
+#     comparison against it passes or fails for the wrong reason. They exist only
+#     as OIDC token claims.
+#   * For an ANNOTATED tag the sha claim is the TAG OBJECT, not the commit. A
+#     naive compare against a commit sha rejects every legitimate release, since
+#     releases here are annotated by policy.
+name: Auth Smoke
+
+on:
+  workflow_call:
+    inputs:
+      pipeline-ref:
+        description: >-
+          The ref this workflow was called at. MUST match the `uses:` pin — it is
+          asserted against the OIDC claim, so a mismatch fails closed.
+        required: true
+        type: string
+      pipeline-repo:
+        description: "Where the pipeline lives. A fork must opt in explicitly."
+        required: false
+        type: string
+        default: wafflebase/agent-pipeline
+      environment:
+        description: "Deployment environment holding CLAUDE_CODE_OAUTH_TOKEN."
+        required: false
+        type: string
+        default: agent
+      node-version:
+        required: false
+        type: string
+        default: "22.x"
+      model:
+        description: "Override the probe model. Empty uses the script's pinned default."
+        required: false
+        type: string
+        default: ""
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN:
+        description: "The credential under test."
+        required: true
+
+permissions: {}
+
+jobs:
+  # Verifies WHICH code this run is about to trust, and nothing else.
+  pin:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      id-token: write # the ONLY permission this job gets
+    outputs:
+      sha: ${{ steps.verify.outputs.sha }}
+    steps:
+      - name: Verify the pin against the OIDC claim
+        id: verify
+        env:
+          PIPELINE_REPO: ${{ inputs.pipeline-repo }}
+          PIPELINE_REF: ${{ inputs.pipeline-ref }}
+          GH_TOKEN: ${{ github.token }} # public-repo reads only
+        run: |
+          set -euo pipefail
+          TOK=$(curl -sSf -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+                  "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=agent-pipeline" | jq -r .value)
+          PAY=$(printf '%s' "$TOK" | cut -d. -f2)
+          case $(( ${#PAY} % 4 )) in 2) PAY="${PAY}==";; 3) PAY="${PAY}=";; esac
+          CLAIMS=$(printf '%s' "$PAY" | tr '_-' '/+' | base64 -d)
+          JW_REF=$(printf '%s' "$CLAIMS" | jq -r '.job_workflow_ref // ""')
+          JW_SHA=$(printf '%s' "$CLAIMS" | jq -r '.job_workflow_sha // ""')
+          [ -n "$JW_REF" ] || { echo "::error::No job_workflow_ref claim — this is not a reusable-workflow call."; exit 1; }
+          echo "claim: $JW_REF"
+
+          # job_workflow_ref = <owner>/<repo>/<path>@<ref>
+          CLAIM_REPO="${JW_REF%%/.github/*}"
+          CLAIM_REF="${JW_REF##*@}"
+          if [ "$CLAIM_REPO" != "$PIPELINE_REPO" ]; then
+            echo "::error::Called from '$CLAIM_REPO' but pipeline-repo says '$PIPELINE_REPO'. Refusing — this is how a shim aimed at a FORK of the pipeline is caught, which no context field can detect."
+            exit 1
+          fi
+          # A SHA pin and a tag/branch pin present differently in the claim, so
+          # compare the shape the caller actually used rather than assuming one.
+          if printf '%s' "$PIPELINE_REF" | grep -Eq '^[0-9a-f]{40}$'; then
+            if [ "$JW_SHA" != "$PIPELINE_REF" ] && [ "${CLAIM_REF#refs/*/}" != "$PIPELINE_REF" ]; then
+              echo "::error::pipeline-ref '$PIPELINE_REF' does not match the loaded workflow (claim ref '$CLAIM_REF', claim sha '$JW_SHA')."
+              exit 1
+            fi
+            COMMIT="$PIPELINE_REF"
+          else
+            SHORT="${CLAIM_REF#refs/*/}"
+            if [ "$SHORT" != "$PIPELINE_REF" ]; then
+              echo "::error::pipeline-ref says '$PIPELINE_REF' but GitHub loaded '$CLAIM_REF'. A moving tag between resolution and checkout would run one version's logic over another's scripts — refusing."
+              exit 1
+            fi
+            # PEEL. The claim is the tag OBJECT for an annotated tag; resolve it
+            # to the commit so every later job checks out something immutable.
+            COMMIT=$(gh api "repos/$PIPELINE_REPO/commits/$SHORT" --jq .sha)
+            printf '%s' "$COMMIT" | grep -Eq '^[0-9a-f]{40}$' \
+              || { echo "::error::Could not resolve '$SHORT' to a commit."; exit 1; }
+          fi
+          echo "sha=$COMMIT" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Pipeline pin verified"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| repo | \`$CLAIM_REPO\` |"
+            echo "| ref (claimed) | \`$CLAIM_REF\` |"
+            echo "| commit | \`$COMMIT\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  smoke:
+    needs: [pin]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: ${{ inputs.environment }}
+    permissions: {} # reads nothing, writes nothing — it only talks to the model
+    steps:
+      # An immutable commit, resolved and asserted by `pin` — never a mutable ref.
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.pipeline-repo }}
+          ref: ${{ needs.pin.outputs.sha }}
+          path: .pipeline-src
+          sparse-checkout: packages/pipeline
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Stage the pipeline outside the workspace
+        run: |
+          set -euo pipefail
+          mv .pipeline-src/packages/pipeline "$RUNNER_TEMP/pipeline"
+          rm -rf .pipeline-src
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+
+      # Installed WITHOUT the credential in scope: `npm ci` runs dependency
+      # lifecycle scripts, and this job holds the secret under test.
+      - name: Install the Agent SDK
+        working-directory: ${{ runner.temp }}/pipeline
+        run: npm ci --no-audit --no-fund
+
+      # The exit CODE is the signal, not merely pass/fail — `outcome` cannot carry
+      # it, so capture it as an output. `continue-on-error` lets the classifying
+      # step below run and decide, rather than the job dying on any non-zero.
+      - name: Live auth check
+        id: probe
+        continue-on-error: true
+        working-directory: ${{ runner.temp }}/pipeline
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          SMOKE_MODEL: ${{ inputs.model }}
+        run: |
+          set +e
+          node auth-smoke.mjs
+          CODE=$?
+          echo "code=$CODE" >> "$GITHUB_OUTPUT"
+          exit $CODE
+
+      # auth-smoke.mjs distinguishes "the credential is wrong" (1) from "the
+      # credential is fine and the service refused on quota" (2) from "the SDK is
+      # not installed" (3). Collapsing those into one red X is the defect this
+      # port fixes: the question this workflow answers is "is my credential good?"
+      # and a quota refusal answers YES. So 2 passes — annotated loudly enough
+      # that nobody reads it as "the pipeline will run right now" — while 1 and 3
+      # fail, because those are the ones an adopter must act on.
+      - name: Classify the outcome
+        env:
+          CODE: ${{ steps.probe.outputs.code }}
+        run: |
+          set -euo pipefail
+          case "${CODE:-unknown}" in
+            0)
+              { echo "### ✅ Authenticated"; echo; echo "The credential works on this runner. Safe to arm."; } \
+                | tee -a "$GITHUB_STEP_SUMMARY"
+              ;;
+            2)
+              echo "::warning::Authentication SUCCEEDED; the service refused on capacity or quota. Nothing is misconfigured — retry when the limit resets."
+              {
+                echo "### ⏳ Authenticated, but the service is at capacity"
+                echo
+                echo "**The credential is fine.** A quota refusal is proof it was accepted and the"
+                echo "request reached the service, so there is nothing to fix here."
+                echo
+                echo "This is NOT a green light to expect a run to complete right now — retry once"
+                echo "the limit resets. See the \`Live auth check\` step for the reset time."
+              } >> "$GITHUB_STEP_SUMMARY"
+              ;;
+            3)
+              echo "::error::The Agent SDK is not installed — the install step did not produce node_modules."
+              { echo "### ❌ Tooling failure"; echo; echo "\`npm ci\` did not leave a usable SDK. This is a pipeline bug, not a credential problem."; } \
+                >> "$GITHUB_STEP_SUMMARY"
+              exit 1
+              ;;
+            *)
+              echo "::error::The auth check failed (exit ${CODE:-unknown}). See the 'Live auth check' step — it names whether the credential or the service is at fault."
+              {
+                echo "### ❌ Auth smoke failed"
+                echo
+                echo "Read the \`Live auth check\` step. It distinguishes a bad credential from a"
+                echo "quota refusal: if it says **Authentication SUCCEEDED** and names a limit, the"
+                echo "credential is fine and this is a retry rather than a misconfiguration."
+              } >> "$GITHUB_STEP_SUMMARY"
+              exit 1
+              ;;
+          esac
