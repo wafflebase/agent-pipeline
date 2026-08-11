@@ -54,8 +54,17 @@ on:
         default: ""
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN:
-        description: "The credential under test."
-        required: true
+        # NOT `required: true`, and that is deliberate. `secrets: inherit` forwards
+        # only REPOSITORY and ORGANISATION secrets — it cannot see ENVIRONMENT
+        # secrets, so declaring this required makes every call fail at start with
+        # "Secret ... is required, but not provided while calling" for an adopter
+        # who followed the setup guide and put the token in the protected `agent`
+        # environment. The pipeline WANTS it there: that is what lets a required
+        # reviewer gate spend. The `smoke` job below declares `environment:`, and
+        # environments resolve in the CALLER, so the secret is read from the
+        # caller's environment at run time instead of being passed at call time.
+        description: "Optional override. Normally read from the caller's `agent` environment."
+        required: false
 
 permissions: {}
 
