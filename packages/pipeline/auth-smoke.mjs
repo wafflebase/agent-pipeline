@@ -54,6 +54,13 @@ const AUTH = [
   /expired[ _-]?(token|credential)/i,
   /not[ _-]?authenticated/i,
   /permission[ _-]?denied/i,
+  // What an unauthenticated Agent SDK actually says, measured rather than
+  // guessed: "Not logged in · Please run /login". The first version of this list
+  // missed it, so the single most likely real-world failure — a token that is
+  // absent or malformed — fell through to "could not be classified".
+  /not[ _-]?logged[ _-]?in/i,
+  /please run \/login/i,
+  /\/login\b/,
 ];
 
 /** Classify a failure message. Returns "quota" | "auth" | "unknown". */

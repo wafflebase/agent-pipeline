@@ -54,6 +54,18 @@ test("real credential failures are still reported as credential failures", () =>
   }
 });
 
+test("the message an unauthenticated SDK actually returns classifies as auth", () => {
+  // Verbatim from testbed run 31478400821, which ran the reusable workflow with a
+  // deliberately invalid token. The first version of the classifier returned
+  // "unknown" for this — the most likely real failure of all, an absent or
+  // malformed token, was the one case it could not name.
+  const real = "Claude Code returned an error result: Not logged in \u00b7 Please run /login";
+  assert.equal(classifyFailure(real), "auth");
+  const { code, text } = describeFailure("auth", real);
+  assert.equal(code, EXIT.auth);
+  assert.match(text, /CLAUDE_CODE_OAUTH_TOKEN/);
+});
+
 test("quota wins when a capacity refusal is dressed up in credential language", () => {
   // Observed shape: the transport reports a 429 while the prose mentions the
   // account. The specific signal is the more reliable one, so quota is checked
