@@ -1,0 +1,31 @@
+# Code owners for the agent pipeline.
+#
+# NOTE ON HOW THIS ACTUALLY WORKS — the same trap as the `agent:candidate`
+# label: a CODEOWNERS entry naming a team that does not exist, or that has no
+# write access to this repository, is **silently ignored**. No error, no
+# warning, no review requested. So `@wafflebase/maintainers` must (1) exist and
+# (2) hold at least write access here. Both were verified when this file landed;
+# re-verify if reviews stop being requested.
+#
+# There is deliberately no repo-wide `* @owner` rule. Ownership is claimed only
+# where a wrong change is dangerous rather than merely wrong, so that routine
+# contributions stay reviewable by anyone with write access.
+
+# The control plane: workflow topology, job permissions, and the trusted-code
+# checkout. A mistake here fails silently and can make a pull request able to
+# influence its own review.
+/.github/workflows/       @wafflebase/maintainers
+/.github/CODEOWNERS       @wafflebase/maintainers
+
+# The pipeline itself, including the lens rubrics — the rubrics are prompts, so
+# editing them changes what the gating reviewer looks for.
+/packages/pipeline/       @wafflebase/maintainers
+
+# The shared kernel. Consumers vendor these files byte-for-byte and verify them
+# by sha256, so a change here is a change in every consumer at their next bump.
+/packages/kernel/         @wafflebase/maintainers
+
+# The adoption kit: shim templates carry security-relevant configuration (the
+# concurrency key that stops a fork cancelling a legitimate review panel), so a
+# template edit propagates to every repo that copies it.
+/adoption/                @wafflebase/maintainers

@@ -1,0 +1,69 @@
+{
+  "timestamp": "2026-08-10T07:38:16.413Z",
+  "overall": "pass",
+  "totalDurationMs": 421749,
+  "lanesRun": 12,
+  "lanesTotal": 12,
+  "lanes": [
+    {
+      "lane": "agent:tests",
+      "status": "pass",
+      "durationMs": 6591
+    },
+    {
+      "lane": "core:build",
+      "status": "pass",
+      "durationMs": 2179
+    },
+    {
+      "lane": "sheets:build",
+      "status": "pass",
+      "durationMs": 8435
+    },
+    {
+      "lane": "docs:build",
+      "status": "pass",
+      "durationMs": 7854
+    },
+    {
+      "lane": "slides:build",
+      "status": "pass",
+      "durationMs": 11058
+    },
+    {
+      "lane": "verify:dts",
+      "status": "pass",
+      "durationMs": 64
+    },
+    {
+      "lane": "verify:fast",
+      "status": "pass",
+      "durationMs": 320317
+    },
+    {
+      "lane": "frontend:build",
+      "status": "pass",
+      "durationMs": 34987
+    },
+    {
+      "lane": "verify:frontend:chunks",
+      "status": "pass",
+      "durationMs": 342
+    },
+    {
+      "lane": "backend:build",
+      "status": "pass",
+      "durationMs": 5909
+    },
+    {
+      "lane": "cli:build",
+      "status": "pass",
+      "durationMs": 1235
+    },
+    {
+      "lane": "verify:entropy",
+      "status": "pass",
+      "durationMs": 22742
+    }
+  ]
+}
