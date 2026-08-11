@@ -5,9 +5,6 @@ a draft PR, CI failures are fixed in a loop, a multi-lens review panel gates the
 result, and a clean PR is promoted to ready-for-review. **Humans still approve
 and merge** — nothing here can merge a pull request.
 
-Extracted from [`wafflebase/wafflebase`](https://github.com/wafflebase/wafflebase),
-where it has been running in production.
-
 > **Status: not yet consumable.** This repo is mid-extraction. The scripts are
 > here and their tests pass, but the workflows are still wafflebase-shaped copies
 > and are **not** yet callable via `workflow_call`. Do not point a repo at this
