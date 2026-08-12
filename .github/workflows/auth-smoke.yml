@@ -169,6 +169,33 @@ jobs:
       # The exit CODE is the signal, not merely pass/fail — `outcome` cannot carry
       # it, so capture it as an output. `continue-on-error` lets the classifying
       # step below run and decide, rather than the job dying on any non-zero.
+      # "No credential reached this job" and "the credential is wrong" produce the
+      # SAME message from the SDK ("Not logged in"), so the classifier cannot tell
+      # them apart — and they have completely different fixes. Check presence here,
+      # where it IS knowable, and say which delivery path was expected.
+      - name: The credential reached this job
+        env:
+          TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          ENVIRONMENT: ${{ inputs.environment }}
+        run: |
+          set -euo pipefail
+          if [ -z "${TOKEN:-}" ]; then
+            echo "::error::CLAUDE_CODE_OAUTH_TOKEN is EMPTY in this job — nothing was delivered, so the credential itself is not the problem yet."
+            {
+              echo "### ❌ No credential reached the pipeline"
+              echo
+              echo "This is a delivery problem, not a bad token. It is one of these:"
+              echo
+              echo "- the secret is a **repository/organisation** secret and the caller did not pass"
+              echo "  \`secrets: inherit\` (or pass it explicitly);"
+              echo "- the secret is an **environment** secret on \`$ENVIRONMENT\` — \`secrets: inherit\`"
+              echo "  cannot forward those, and this job's \`environment:\` must name the right one;"
+              echo "- the secret does not exist under that name."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "credential present (${#TOKEN} chars) — delivery is fine, so any failure below is the token or the service."
+
       - name: Live auth check
         id: probe
         continue-on-error: true
