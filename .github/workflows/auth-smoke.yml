@@ -54,16 +54,23 @@ on:
         default: ""
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN:
-        # NOT `required: true`, and that is deliberate. `secrets: inherit` forwards
-        # only REPOSITORY and ORGANISATION secrets — it cannot see ENVIRONMENT
-        # secrets, so declaring this required makes every call fail at start with
-        # "Secret ... is required, but not provided while calling" for an adopter
-        # who followed the setup guide and put the token in the protected `agent`
-        # environment. The pipeline WANTS it there: that is what lets a required
-        # reviewer gate spend. The `smoke` job below declares `environment:`, and
-        # environments resolve in the CALLER, so the secret is read from the
-        # caller's environment at run time instead of being passed at call time.
-        description: "Optional override. Normally read from the caller's `agent` environment."
+        # MEASURED, and the opposite of what is easy to assume. Two separate
+        # facts, established on a real runner rather than from the docs:
+        #
+        #   * Environment SECRETS do NOT reach a called workflow's job, even when
+        #     that job declares `environment:`. Measured: the token sat in the
+        #     caller's `agent` environment, the job named that environment, and
+        #     `secrets.CLAUDE_CODE_OAUTH_TOKEN` was still empty. So the ONLY
+        #     delivery path is a repository/organisation secret, forwarded with
+        #     `secrets: inherit` or passed explicitly.
+        #   * Environment PROTECTION RULES *do* apply. Measured: with a required
+        #     reviewer on the caller's environment, this job sat in `waiting` with
+        #     a pending deployment. The spend gate survives extraction — it just
+        #     gates the JOB, and cannot also be the secret store.
+        #
+        # Hence `required: false`: a caller using `secrets: inherit` provides it
+        # without naming it, and declaring it required rejects that call outright.
+        description: "Repository or organisation secret, via `secrets: inherit` or an explicit pass. An ENVIRONMENT secret will NOT reach this workflow."
         required: false
 
 permissions: {}
