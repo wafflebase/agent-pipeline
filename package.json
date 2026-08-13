@@ -1,0 +1,20 @@
+{
+  "name": "@wafflebase/agent-pipeline",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Reusable autonomous issue-to-PR pipeline for GitHub Actions.",
+  "scripts": {
+    "test": "node scripts/verify-self.mjs --lane tests",
+    "lint": "eslint packages",
+    "verify:invariants": "node scripts/verify-invariants.mjs",
+    "verify:fast": "node scripts/verify-self.mjs --fast",
+    "verify:self": "node scripts/verify-self.mjs",
+    "postinstall": "git config core.hooksPath .githooks || true"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.21.0",
+    "eslint": "^9.21.0",
+    "globals": "^16.0.0"
+  }
+}
