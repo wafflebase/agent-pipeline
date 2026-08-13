@@ -6,6 +6,18 @@
 # `vars.AGENT_PIPELINE_ENABLED == 'true'`, which is unset in this repo — but the
 # runs would be noise, and relying on a kill switch for something a name choice
 # can prevent outright is the wrong default.
+#
+# The name is ALSO load-bearing for the extraction. `mark-ready.mjs` and
+# `set-state.mjs` still hardcode `r.name === "CI"` when they look for the CI run,
+# so this repo is the only place a non-default CI name gets exercised at all —
+# wafflebase and the yorkie pilot are both called "CI", which means a residual
+# hardcode passes unnoticed in both. Renaming this to "CI" would quietly retire
+# the one test of that path. See EXTRACTION_PLAN.md finding #50.
+#
+# EACH JOB RUNS ONE NAMED LANE from scripts/verify-self.mjs, the same runner
+# `pnpm verify:fast` uses locally. These commands used to be inline shell here,
+# which meant a contributor could not run them before pushing and nothing kept
+# the shell honest.
 name: Pipeline Tests
 
 on:
@@ -23,61 +35,58 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
+      # No step here needs the token, so it does not get left in .git/config
+      # where anything the job runs could read it.
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: "22.x"
 
-      # NO `npm ci`. The suite must pass with `node_modules` ABSENT, because
-      # that is the condition wafflebase's `agent:tests` lane runs under and it
-      # is what makes the module-scope import guard in ask.test.mjs meaningful.
-      # A module that statically imported the Agent SDK would take the whole
-      # suite down here — which is the point.
+      # NO INSTALL IN THIS JOB, ON PURPOSE — do not add one.
+      #
+      # The suite must pass with `node_modules` absent, because that is the
+      # condition wafflebase's `agent:tests` lane runs under and it is what
+      # ENFORCES the dynamic-import rule: third-party deps (the Agent SDK, zod)
+      # are reachable only through `await import()` inside the function that needs
+      # them. A module that imported the SDK at load time would take the whole
+      # suite down here, which is the intended signal.
+      #
+      # `verify-invariants.mjs` checks the same property statically, in the job
+      # below. The two are belt and braces, and the braces only exist while this
+      # directory is empty — which is why the lint lane, the one thing here that
+      # does need devDependencies, is a separate job.
       - name: Unit tests (node_modules absent, by design)
-        working-directory: packages/pipeline
-        run: node --test-timeout=60000 --test '**/*.test.mjs'
+        run: node scripts/verify-self.mjs --lane tests
 
   invariants:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.x"
+      # Also no install: this lane reads source, it does not run it.
+      - name: Structural invariants
+        run: node scripts/verify-self.mjs --lane invariants
 
-      # Acceptance criterion for the extraction's step 1a: nothing in the moved
-      # set may reach a file that stayed behind in wafflebase.
-      - name: No import escapes packages/pipeline
-        working-directory: packages/pipeline
-        run: |
-          set -euo pipefail
-          if grep -nE 'from "(\.\./|/)' ./*.mjs; then
-            echo "::error::an import reaches outside packages/pipeline"; exit 1
-          fi
-          echo "ok: no import escapes packages/pipeline"
-
-      - name: Every relative import resolves
-        working-directory: packages/pipeline
-        run: |
-          set -euo pipefail
-          missing=0
-          for t in $(grep -hoE 'from "\./[^"]+"|import\("\./[^"]+"\)' ./*.mjs \
-                     | grep -oE '\./[A-Za-z0-9._/-]+' | sort -u); do
-            if [ ! -f "${t#./}" ]; then echo "::error::unresolved import $t"; missing=1; fi
-          done
-          [ "$missing" = 0 ] || exit 1
-          echo "ok: import closure holds"
-
-      # The invariant ask.test.mjs:449-486 enforces, restated as a cheap lane so
-      # a violation is named directly instead of surfacing as a suite-wide crash.
-      - name: Third-party imports are dynamic-only
-        working-directory: packages/pipeline
-        run: |
-          set -euo pipefail
-          if grep -nE '^\s*(import|export)[^(]*from\s+"[^./n]' ./*.mjs; then
-            echo "::error::module-scope bare specifier — third-party deps must be await import()ed inside a function"
-            exit 1
-          fi
-          echo "ok: no module-scope bare specifiers"
-
-      # Step 2 adds one grep-zero lane per constant family as it is centralised
-      # into config.mjs (see EXTRACTION_PLAN.md §2.2). Nothing to assert yet —
-      # the move in step 1a is verbatim on purpose.
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.x"
+          cache: npm
+      # The ONLY job that installs, and it installs at the ROOT — never inside
+      # packages/pipeline, whose emptiness the tests job depends on.
+      - run: npm ci --no-audit --no-fund
+      - name: Lint
+        run: node scripts/verify-self.mjs --lane lint

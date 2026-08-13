@@ -22,6 +22,13 @@ and merge** — nothing here can merge a pull request.
 ## Running the tests
 
 ```sh
+npm install          # root only. Installs the linter and points git at .githooks
+npm run verify:self  # lint + structural invariants + the suite
+```
+
+Or the suite on its own, with no install at all:
+
+```sh
 cd packages/pipeline
 node --test-timeout=60000 --test '**/*.test.mjs'
 ```
@@ -52,7 +59,7 @@ against that exact version, so a bump needs a smoke test and an end-to-end run.
 - **Markers are load-bearing.** Model output that will be embedded in a comment
   is neutralised first, because a planted `<!-- agent-review-paged -->` inside a
   finding summary would forge a latch.
-- **Six of the moved scripts have no test suite of their own**: `auth-smoke`,
-  `disclosure`, `gh-checks`, `mark-ready`, `review-round-guard`, `summarize-ci`.
-  `mark-ready.mjs` is the notable gap — its exit codes 1/2/3 are a contract the
+- **Five of the moved scripts have no test suite of their own**: `disclosure`,
+  `gh-checks`, `mark-ready`, `review-round-guard`, `summarize-ci`. (`auth-smoke`
+  was the sixth and now has nine.) `mark-ready.mjs` is the notable gap — its exit codes 1/2/3 are a contract the
   panel workflow branches on, and nothing pins them.
