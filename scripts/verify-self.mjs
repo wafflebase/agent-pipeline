@@ -89,8 +89,17 @@ function main() {
     console.log(JSON.stringify(LANES, null, 2));
     return;
   }
-  const only = argv.indexOf("--lane") !== -1 ? argv[argv.indexOf("--lane") + 1] : null;
+  const laneAt = argv.indexOf("--lane");
+  const only = laneAt !== -1 ? argv[laneAt + 1] : null;
   const fastOnly = argv.includes("--fast");
+
+  // `--lane` with nothing after it used to fall through to running EVERY lane —
+  // the loudest possible reading of a flag that asked for one. In CI that job
+  // would then run the lint lane in a checkout that installs nothing.
+  if (laneAt !== -1 && !only) {
+    console.error(`verify-self: --lane needs a lane name. Known: ${LANES.map((l) => l.name).join(", ")}`);
+    process.exit(1);
+  }
 
   let lanes = LANES;
   if (only) {

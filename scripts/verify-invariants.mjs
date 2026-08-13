@@ -87,15 +87,31 @@ export function imports(root = PKG, files = pipelineFiles(root)) {
   return out;
 }
 
+// A STATIC `import`/`export ... from` DECLARATION, which is legal only at module
+// scope — so what makes it module-scope is the declaration form, not its column.
+// Anchoring on column 0 instead meant one leading space hid it, and so did a named
+// import spread over several lines; both were mutation-tested and both got through.
+//
+// Told apart from the dynamic `await import()` a third-party dep must use by what
+// follows the keyword: a quote, not a paren. The clause between the keyword and
+// `from` may span lines but may not cross a quote, a `;` or a paren, so a match
+// cannot step over a string literal or out of its own statement.
+const MODULE_SCOPE_RE =
+  /^[ \t]*(?:import|export)\b[^'"`;()]*?\bfrom\s*(["'])([^"'\n]+)\1|^[ \t]*import\s*(["'])([^"'\n]+)\3/gm;
+
 /** Imports at MODULE scope only — the ones that run on load. */
 export function moduleScopeImports(root = PKG, files = pipelineFiles(root)) {
   const out = [];
   for (const file of files) {
-    for (const line of readFileSync(path.join(root, file), "utf8").split("\n")) {
-      // A module-scope import is at column 0; anything indented is inside a
-      // function, which is where a third-party `await import()` belongs.
-      const m = /^(?:import|export)[^(]*?\bfrom\s*(["'])([^"'\n]+)\1/.exec(line) ?? /^import\s*(["'])([^"'\n]+)\1/.exec(line);
-      if (m) out.push({ file, spec: m[2] });
+    const text = readFileSync(path.join(root, file), "utf8");
+    for (const m of text.matchAll(MODULE_SCOPE_RE)) {
+      // Same fixture-string exclusion `imports()` uses, still needed now that an
+      // indented keyword counts: these files WRITE JavaScript into temp directories.
+      const lineStart = text.lastIndexOf("\n", m.index) + 1;
+      const lineEnd = text.indexOf("\n", m.index);
+      const line = text.slice(lineStart, lineEnd === -1 ? undefined : lineEnd);
+      if (insideString(line, m.index - lineStart)) continue;
+      out.push({ file, spec: m[2] ?? m[4] });
     }
   }
   return out;
@@ -116,8 +132,11 @@ export function checkInvariants(root = PKG) {
     const rel = path.relative(root, target);
     if (rel.startsWith("..")) {
       problems.push(`${file} imports ${spec}, which escapes packages/pipeline`);
-    } else if (!existsSync(target)) {
-      problems.push(`${file} imports ${spec}, which does not exist`);
+    } else if (!statSync(target, { throwIfNoEntry: false })?.isFile()) {
+      // A FILE, not merely something that exists. ESM has no directory resolution,
+      // so `./lenses` resolving to a directory is a runtime crash that `existsSync`
+      // alone called fine.
+      problems.push(`${file} imports ${spec}, which does not resolve to a file`);
     }
   }
 
