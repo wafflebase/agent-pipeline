@@ -37,6 +37,7 @@ import { fileURLToPath } from "node:url";
 // scripts/agent/node_modules ABSENT, so a module that statically pulled in the
 // Agent SDK would take this whole file down with it (ask.test.mjs enforces this).
 import { classifyResult } from "./ask.mjs";
+import { redactSecrets } from "./redact.mjs";
 import { emitBestEffortWarning } from "./guard-verdict.mjs";
 
 // Each session posts its OWN hidden metric comment (append-only) — no shared
@@ -861,7 +862,13 @@ export function renderFixEffort({ rec, outcome, head, runUrl }) {
     // Spelled out per kind: "limit" is a ceiling the run hit and will hit again
     // unchanged, while a retryable api-error is a transient the same command
     // clears. Telling a maintainer to retry a `max_turns` failure wastes a round.
-    const detail = String(outcome.detail || "").slice(0, 500);
+    // Redacted before truncation: this block is posted as a PR COMMENT, the most
+    // public and most copyable surface the pipeline writes to, and `detail` is
+    // quoted upstream text. `detail` is scrubbed at source in `classifyResult`;
+    // this is the second layer, and it also covers an execution log written by an
+    // older pipeline version. Session-limit prose is untouched by the scrubber, so
+    // the `sessionLimited` classification below is unaffected.
+    const detail = redactSecrets(String(outcome.detail || "")).slice(0, 500);
     // A SESSION LIMIT is neither of the other two, and calling it either sends a
     // maintainer the wrong way. `classifyResult` marks it non-retryable — correct,
     // because retrying inside the same run cannot help — but it clears on its own

@@ -25,6 +25,13 @@
 // standalone element, which is how a caller marks the cacheable prefix — see the
 // mirrored constant below.
 
+// Local, dependency-free — safe as a static import under the "third-party
+// imports are dynamic-only" rule. Every `detail` this module produces is scrubbed
+// through it before any caller sees the value: `detail` is quoted upstream text,
+// and the SDK echoes an invalid Authorization header value back inside it. See
+// redact.mjs for the incident this prevents.
+import { redactSecrets } from "./redact.mjs";
+
 /**
  * The COMPLETE set of tools any agent spawned through this wrapper may ever be
  * granted. Callers pass a subset; anything else is refused.
@@ -325,16 +332,20 @@ export function classifyResult(message) {
       ok: false,
       kind: "limit",
       status: null,
-      detail: `${reason}${turns}${extra ? ` — ${extra}` : ""}`,
+      detail: redactSecrets(`${reason}${turns}${extra ? ` — ${extra}` : ""}`),
       retryable: false,
       turns: Number.isFinite(m.num_turns) ? m.num_turns : null,
     };
   }
   if (isApiError) {
-    const detail = typeof m.result === "string" && m.result ? m.result : "";
+    const raw = typeof m.result === "string" && m.result ? m.result : "";
     const status = m.api_error_status ?? null;
-    const retryable = !SESSION_LIMIT_RE.test(detail) && isRetryableStatus(status);
-    return { ok: false, kind: "api-error", status, detail, retryable };
+    // Classify from the RAW text, then store the redacted copy. Redaction can
+    // rewrite any span it recognises, and deciding retryability from a string
+    // that has already been through it would let a scrubbed token change
+    // whether we retry. Nothing downstream sees `raw`.
+    const retryable = !SESSION_LIMIT_RE.test(raw) && isRetryableStatus(status);
+    return { ok: false, kind: "api-error", status, detail: redactSecrets(raw), retryable };
   }
   return { ok: false, kind: "no-output", status: null, detail: `subtype=${m.subtype}`, retryable: false };
 }

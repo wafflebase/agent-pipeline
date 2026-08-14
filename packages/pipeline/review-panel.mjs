@@ -55,6 +55,7 @@ import { findingLocation, noveltyOf, baseResolves, DEMOTING_ORIGINS } from "./no
 // merge and the agreement metric be built ON one expression, and what lets a
 // reader outside this file key findings the same way without a fourth copy.
 import { findingKey } from "./finding-key.mjs";
+import { publicInfraReason, redactSecrets } from "./redact.mjs";
 // The similarity metric is NOT re-derived here. `rounds.mjs` already owns it for
 // the non-convergence detector, and it was calibrated against real panel output
 // (PR #564's design-fit lens emitting four wordings of one defect, measured
@@ -1196,6 +1197,29 @@ export function resolveReviewScope(args, changedFiles) {
     );
   }
   return { reviewMode, scopeNote, stateExternalId };
+}
+
+/**
+ * The lens summary for a lens that never ran because the API/quota failed.
+ *
+ * A FUNCTION, and exported, for one reason: this string is a wire format with two
+ * parsers. `prior-findings.mjs` recognises a carried infra record by
+ * `summary.startsWith(INFRA_SENTINEL)` — which it must, for records already
+ * stored in check runs by earlier rounds — and `rounds.mjs` matches
+ * `INFRA_SUMMARY` against it. Inline, the prefix looked like prose and an edit to
+ * it would break both silently, one round later, on a PR nobody was watching.
+ * `infra-summary.test.mjs` pins it against both.
+ *
+ * `reason` must come from `publicInfraReason` — a closed vocabulary — not from
+ * the upstream error. The text this builds fans out to the check-run body, the
+ * paged PR comment and the job summary; it once carried a credential onto a
+ * public pull request by interpolating an SDK message here verbatim.
+ */
+export function infraSummary({ status = null, reason }) {
+  return (
+    `Review could not run — Claude API/quota error${status ? ` (${status})` : ""}` +
+    `: ${reason}. See the workflow run log for details.`
+  );
 }
 
 /**
@@ -2608,10 +2632,31 @@ async function main() {
       // but say so honestly and tag the entry so the workflow pages with the real
       // reason (and skips the fixer — there's nothing to fix). A genuine no-verdict
       // (model ran but produced nothing) stays the ordinary fail-closed blocker.
-      const infra = err.infra ? (err.detail || `API error${err.status ? ` (${err.status})` : ""}`) : null;
+      // PUBLICATION BOUNDARY. `err.detail` is upstream prose, and this string is
+      // the most widely-fanned-out text the panel produces: it becomes the lens
+      // summary, the check-run body, the paged PR comment and the job summary. It
+      // once carried a malformed CLAUDE_CODE_OAUTH_TOKEN onto a public PR, because
+      // an invalid Authorization header value is echoed back by the HTTP client
+      // and was interpolated here verbatim. So the reason is now BUILT from a
+      // closed vocabulary (publicInfraReason) rather than quoted from upstream —
+      // there is no longer a path from an SDK message to a comment body. The full
+      // detail stays in the run log below, redacted.
+      //
+      // The `Review could not run — Claude API/quota error` prefix is load-bearing
+      // and must survive any edit here: `prior-findings.mjs` (INFRA_SENTINEL) and
+      // `rounds.mjs` (INFRA_SUMMARY) both recognise an infra record by it, the
+      // former for records already stored in check runs from earlier rounds.
+      // `infra-summary.test.mjs` pins that against both consumers.
+      const infra = err.infra ? publicInfraReason({ status: err.status, detail: err.detail }) : null;
       const summaryText = infra
-        ? `Review could not run — Claude API/quota error${err.status ? ` (${err.status})` : ""}: ${infra}`
-        : `Reviewer did not produce a valid verdict: ${err.message}`;
+        ? infraSummary({ status: err.status, reason: infra })
+        : `Reviewer did not produce a valid verdict: ${redactSecrets(err.message)}`;
+      // Diagnosis for whoever reads the run — redacted, because a public repo's
+      // logs are public and GitHub's own masking cannot be relied on for a
+      // malformed value (it matches exact substrings, and splits on whitespace).
+      if (err.infra && err.detail) {
+        process.stderr.write(`lens ${lens.id}: infra detail: ${redactSecrets(err.detail)}\n`);
+      }
       // Carries NO `confidence`, on purpose. FINDING's `required` constrains the
       // MODEL's output; this record is synthesised by the script because the lens
       // produced nothing usable, so there is no assessment to report. Stamping a

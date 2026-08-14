@@ -17,6 +17,7 @@
 import { readFileSync, appendFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { redactSecrets } from "./redact.mjs";
 import {
   parseExecution,
   classifyFixResult,
@@ -47,7 +48,11 @@ export function renderSessionSummary({ rec = null, outcome = null, title = "Agen
     "",
   );
   if (outcome && outcome.ok === false) {
-    const detail = String(outcome.detail || "no detail reported").slice(0, 400);
+    // Redact BEFORE truncating: the scrubber matches whole credential shapes, and
+    // a slice that cut one in half would leave a fragment no pattern recognises.
+    // `outcome` is read back from a persisted execution log, which an older
+    // pipeline version may have written before `detail` was scrubbed at source.
+    const detail = redactSecrets(String(outcome.detail || "no detail reported")).slice(0, 400);
     lines.push(
       `**Outcome: failed (${outcome.kind}${outcome.status ? ` ${outcome.status}` : ""})** — ${detail}`,
       "",

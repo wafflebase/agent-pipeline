@@ -38,6 +38,7 @@ import {
   whereToLookLine,
 } from "./guard-verdict.mjs";
 import { permissionResolver } from "./gh-checks.mjs";
+import { redactSecrets } from "./redact.mjs";
 
 const [, , prArg, maxArg, allValidArg, requiredChecksArg, infraArg] = process.argv;
 const pr = Number(prArg);
@@ -170,8 +171,14 @@ if (rerunAt) console.error(`rerun: counting fix rounds from ${rerunAt}`);
 // round — there's nothing to fix, and a quota outage isn't a failed review
 // round. Checked before the generic all_valid page so the message is honest.
 if (infra) {
+  // `infra` reaches us through a workflow output that the panel now builds from
+  // a closed vocabulary (redact.mjs::publicInfraReason), so it should already be
+  // free of upstream prose. Redacted anyway: this is a SEPARATE process reading
+  // argv, it cannot verify which panel version produced the value, and the cost
+  // of being wrong here is publishing a credential to a public pull request —
+  // the exact failure this pair of fixes exists to close.
   page(
-    `The review panel could not run — Claude API/quota error: ${infra} ` +
+    `The review panel could not run — Claude API/quota error: ${redactSecrets(infra)} ` +
       `This is an infrastructure/credential issue, not a code problem. Re-run the panel after the limit resets.`,
     "infra",
   );
