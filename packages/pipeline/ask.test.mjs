@@ -270,6 +270,51 @@ test("classifyResult: distinguishes verdict / api-error / no-output at its new h
   assert.equal(none.retryable, false);
 });
 
+test("classifyResult: `detail` is scrubbed at source, for every kind that carries one", () => {
+  // FIX 1 OF THE CREDENTIAL INCIDENT, tested where it is enforced. `detail` is
+  // quoted upstream text and it reaches SIX published surfaces — the lens
+  // summary, the check-run body, the paged PR comment, the fix-effort comment,
+  // the job summary and the metrics record — plus `err.message` below. Scrubbing
+  // at each of those is a list nobody can keep complete; scrubbing here is one
+  // place that cannot be bypassed by adding a seventh.
+  const token = "sk-ant-oat01-AAAAbbbbCCCCddddEEEEffffGGGGhhhh";
+
+  const api = classifyResult({
+    subtype: "success",
+    is_error: true,
+    api_error_status: 401,
+    result: `Header 'Authorization has invalid value: Bearer ${token}`,
+  });
+  assert.equal(api.kind, "api-error");
+  assert.ok(!api.detail.includes(token), `api-error detail leaked: ${api.detail}`);
+
+  const limit = classifyResult({
+    subtype: "error_max_turns",
+    num_turns: 9,
+    errors: [{ message: `auth failed for ${token}` }],
+  });
+  assert.equal(limit.kind, "limit");
+  assert.ok(!limit.detail.includes(token), `limit detail leaked: ${limit.detail}`);
+});
+
+test("classifyResult: redaction does not change how a result is classified", () => {
+  // Retryability is decided from the RAW text, before scrubbing. If it were
+  // decided after, a scrubbed span could flip the decision — and the direction
+  // that matters is a session limit becoming retryable, which burns the whole
+  // retry budget against a ceiling that cannot clear until the window resets.
+  const limited = classifyResult({
+    subtype: "success",
+    is_error: true,
+    api_error_status: 429,
+    result: "You've hit your session limit · resets 3:30pm (UTC) — token abcdef1234567890",
+  });
+  assert.equal(limited.retryable, false, "still recognised as a session limit after scrubbing");
+  assert.ok(!limited.detail.includes("abcdef1234567890"), "…and the credential is still gone");
+  // The prose a human needs is untouched: only the credential span is rewritten.
+  assert.match(limited.detail, /session limit/);
+  assert.match(limited.detail, /resets 3:30pm/);
+});
+
 test("classifyResult: transport errors are retryable — the ECONNRESET regression", () => {
   // The old quota pattern ended in `resets?\b`, which matches "ECONNRESET" at the
   // end-of-string word boundary. Every one of these was classified NOT retryable,
